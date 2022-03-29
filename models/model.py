@@ -17,7 +17,7 @@ class Model(nn.Module):
         self.act_dim = self.args.action_dim
         self.Transition = namedtuple('Transition', ('state', 'action', 'log_prob_a', 'value', 'next_value', 'reward', 'next_state', 'done', 'last_step', 'action_avail', 'last_hid', 'hid'))
         self.batchnorm = nn.BatchNorm1d(self.n_)
-        
+
     def reload_params_to_target(self):
         self.target_net.policy_dicts.load_state_dict( self.policy_dicts.state_dict() )
         self.target_net.value_dicts.load_state_dict( self.value_dicts.state_dict() )
@@ -161,7 +161,7 @@ class Model(nn.Module):
             Agent = RNNAgent
         else:
             NotImplementedError()
-            
+
         if self.args.shared_params:
             self.policy_dicts = nn.ModuleList([ Agent(input_shape, self.args) ])
         else:
@@ -209,8 +209,9 @@ class Model(nn.Module):
         for t in range(self.args.max_steps):
             # current state, action, value
             state_ = prep_obs(state).to(self.device).contiguous().view(1, self.n_, self.obs_dim)
-            action, action_pol, log_prob_a, _, hid = self.get_actions(state_, status='train', exploration=True, actions_avail=th.tensor(trainer.env.get_avail_actions()), target=False, last_hid=last_hid)
-            value = self.value(state_, action_pol)
+            with th.no_grad():
+                action, action_pol, log_prob_a, _, hid = self.get_actions(state_, status='train', exploration=True, actions_avail=th.tensor(trainer.env.get_avail_actions()), target=False, last_hid=last_hid)
+                value = self.value(state_, action_pol)
             _, actual = translate_action(self.args, action, trainer.env)
             # reward
             reward, done, info = trainer.env.step(actual)
@@ -218,8 +219,9 @@ class Model(nn.Module):
             # next state, action, value
             next_state = trainer.env.get_obs()
             next_state_ = prep_obs(next_state).to(self.device).contiguous().view(1, self.n_, self.obs_dim)
-            _, next_action_pol, _, _, _ = self.get_actions(next_state_, status='train', exploration=True, actions_avail=th.tensor(trainer.env.get_avail_actions()), target=False, last_hid=hid)
-            next_value = self.value(next_state_, next_action_pol)
+            with th.no_grad():
+                _, next_action_pol, _, _, _ = self.get_actions(next_state_, status='train', exploration=True, actions_avail=th.tensor(trainer.env.get_avail_actions()), target=False, last_hid=hid)
+                next_value = self.value(next_state_, next_action_pol)
             # store trajectory
             if isinstance(done, list): done = np.sum(done)
             done_ = done or t==self.args.max_steps-1
@@ -265,38 +267,39 @@ class Model(nn.Module):
     def evaluation(self, stat, trainer):
         num_eval_episodes = self.args.num_eval_episodes
         stat_test = {}
-        for _ in range(num_eval_episodes):
-            stat_test_epi = {'mean_test_reward': 0}
-            state, global_state = trainer.env.reset()
-            # init hidden states
-            last_hid = self.policy_dicts[0].init_hidden()
-            for t in range(self.args.max_steps):
-                state_ = prep_obs(state).to(self.device).contiguous().view(1, self.n_, self.obs_dim)
-                action, _, _, _, hid = self.get_actions(state_, status='test', exploration=False, actions_avail=th.tensor(trainer.env.get_avail_actions()), target=False, last_hid=last_hid)
-                _, actual = translate_action(self.args, action, trainer.env)
-                reward, done, info = trainer.env.step(actual)
-                done_ = done or t==self.args.max_steps-1
-                next_state = trainer.env.get_obs()
-                if isinstance(done, list): done = np.sum(done)
-                for k, v in info.items():
-                    if 'mean_test_' + k not in stat_test_epi.keys():
-                        stat_test_epi['mean_test_' + k] = v
+        with th.no_grad():
+            for _ in range(num_eval_episodes):
+                stat_test_epi = {'mean_test_reward': 0}
+                state, global_state = trainer.env.reset()
+                # init hidden states
+                last_hid = self.policy_dicts[0].init_hidden()
+                for t in range(self.args.max_steps):
+                    state_ = prep_obs(state).to(self.device).contiguous().view(1, self.n_, self.obs_dim)
+                    action, _, _, _, hid = self.get_actions(state_, status='test', exploration=False, actions_avail=th.tensor(trainer.env.get_avail_actions()), target=False, last_hid=last_hid)
+                    _, actual = translate_action(self.args, action, trainer.env)
+                    reward, done, info = trainer.env.step(actual)
+                    done_ = done or t==self.args.max_steps-1
+                    next_state = trainer.env.get_obs()
+                    if isinstance(done, list): done = np.sum(done)
+                    for k, v in info.items():
+                        if 'mean_test_' + k not in stat_test_epi.keys():
+                            stat_test_epi['mean_test_' + k] = v
+                        else:
+                            stat_test_epi['mean_test_' + k] += v
+                    stat_test_epi['mean_test_reward'] += reward
+                    if done_:
+                        break
+                    # set the next state
+                    state = next_state
+                    # set the next last_hid
+                    last_hid = hid
+                for k, v in stat_test_epi.items():
+                    stat_test_epi[k] = v / float(t+1)
+                for k, v in stat_test_epi.items():
+                    if k not in stat_test.keys():
+                        stat_test[k] = v
                     else:
-                        stat_test_epi['mean_test_' + k] += v
-                stat_test_epi['mean_test_reward'] += reward
-                if done_:
-                    break
-                # set the next state
-                state = next_state
-                # set the next last_hid
-                last_hid = hid
-            for k, v in stat_test_epi.items():
-                stat_test_epi[k] = v / float(t+1)
-            for k, v in stat_test_epi.items():
-                if k not in stat_test.keys():
-                    stat_test[k] = v
-                else:
-                    stat_test[k] += v
+                        stat_test[k] += v
         for k, v in stat_test.items():
             stat_test[k] = v / float(num_eval_episodes)
         stat.update(stat_test)

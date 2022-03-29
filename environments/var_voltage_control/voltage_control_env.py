@@ -47,7 +47,7 @@ class VoltageControl(MultiAgentEnv):
 
         # load the model of power network
         self.base_powergrid = self._load_network()
-        
+
         # load data
         self.pv_data = self._load_pv_data()
         self.active_demand_data = self._load_active_demand_data()
@@ -79,6 +79,9 @@ class VoltageControl(MultiAgentEnv):
         elif self.args.mode == "decentralised":
             self.n_actions = len(self.base_powergrid.sgen)
             self.n_agents = len( set( self.base_powergrid.bus["zone"].to_numpy(copy=True) ) ) - 1 # exclude the main zone
+        elif self.args.mode == "centralised":
+            self.n_actions = len(self.base_powergrid.sgen)
+            self.n_agents = 1
         agents_obs, state = self.reset()
 
         self.obs_size = agents_obs[0].shape[0]
@@ -117,7 +120,7 @@ class VoltageControl(MultiAgentEnv):
             if self.args.reset_action:
                 self.powergrid.sgen["q_mvar"] = self.get_action()
                 self.powergrid.sgen["q_mvar"] = self._clip_reactive_power(self.powergrid.sgen["q_mvar"], self.powergrid.sgen["p_mw"])
-            try:    
+            try:
                 pp.runpp(self.powergrid)
                 solvable = True
             except ppException:
@@ -130,7 +133,7 @@ class VoltageControl(MultiAgentEnv):
                 solvable = False
 
         return self.get_obs(), self.get_state()
-    
+
     def manual_reset(self, day, hour, interval):
         """manual reset the initial date
         """
@@ -158,7 +161,7 @@ class VoltageControl(MultiAgentEnv):
             if self.args.reset_action:
                 self.powergrid.sgen["q_mvar"] = self.get_action()
                 self.powergrid.sgen["q_mvar"] = self._clip_reactive_power(self.powergrid.sgen["q_mvar"], self.powergrid.sgen["p_mw"])
-            try:    
+            try:
                 pp.runpp(self.powergrid)
                 solvable = True
             except ppException:
@@ -225,7 +228,7 @@ class VoltageControl(MultiAgentEnv):
             state += list(self.powergrid.res_bus["va_degree"].sort_index().to_numpy(copy=True))
         state = np.array(state)
         return state
-    
+
     def get_obs(self):
         """return the obs for each agent in the power system
            the default obs: voltage, active power of generators, bus state, load active power, load reactive power
@@ -293,6 +296,8 @@ class VoltageControl(MultiAgentEnv):
             for obs_zone in zone_obs_list:
                 pad_obs_zone = np.concatenate( [obs_zone, np.zeros(obs_max_len - obs_zone.shape[0])], axis=0 )
                 agents_obs.append(pad_obs_zone)
+        elif self.args.mode == 'centralised':
+            agents_obs = [self.get_state()]
         if self.history > 1:
             agents_obs_ = []
             for i, obs in enumerate(agents_obs):
@@ -310,11 +315,11 @@ class VoltageControl(MultiAgentEnv):
         return agents_obs
 
     def get_obs_agent(self, agent_id):
-        """return observation for agent_id 
+        """return observation for agent_id
         """
         agents_obs = self.get_obs()
         return agents_obs[agent_id]
-    
+
     def get_obs_size(self):
         """return the observation size
         """
@@ -332,7 +337,7 @@ class VoltageControl(MultiAgentEnv):
         return rand_action
 
     def get_total_actions(self):
-        """return the total number of actions an agent could ever take 
+        """return the total number of actions an agent could ever take
         """
         return self.n_actions
 
@@ -345,7 +350,7 @@ class VoltageControl(MultiAgentEnv):
         return np.expand_dims(np.array(avail_actions), axis=0)
 
     def get_avail_agent_actions(self, agent_id):
-        """ return the available actions for agent_id 
+        """ return the available actions for agent_id
         """
         if self.args.mode == "distributed":
             return [1]
@@ -354,6 +359,8 @@ class VoltageControl(MultiAgentEnv):
             zone_sgens = self.base_powergrid.sgen.loc[self.base_powergrid.sgen["name"] == f"zone{agent_id+1}"]
             avail_actions[zone_sgens.index] = 1
             return avail_actions
+        elif self.args.mode == "centralised":
+            return [1 for _ in range(self.n_actions)]
 
     def get_num_of_agents(self):
         """return the number of agents
@@ -376,7 +383,7 @@ class VoltageControl(MultiAgentEnv):
         """select start hour for an episode
         """
         return np.random.choice(24)
-    
+
     def _select_start_interval(self):
         """select start interval for an episode
         """
@@ -419,7 +426,7 @@ class VoltageControl(MultiAgentEnv):
         demand.index.name = 'time'
         demand = demand.iloc[::1, 1:] * self.args.demand_scale
         return demand
-    
+
     def _load_reactive_demand_data(self):
         """load reactive demand data
         the sensor frequency is set to 3 min as default
@@ -440,7 +447,7 @@ class VoltageControl(MultiAgentEnv):
         nr_intervals = episode_length + history + 1  # margin of 1
         episode_pv_history = self.pv_data[start:start + nr_intervals].values
         return episode_pv_history
-    
+
     def _get_episode_active_demand_history(self):
         """return the active power histories for all loads in an episode
         """
@@ -450,7 +457,7 @@ class VoltageControl(MultiAgentEnv):
         nr_intervals = episode_length + history + 1  # margin of 1
         episode_demand_history = self.active_demand_data[start:start + nr_intervals].values
         return episode_demand_history
-    
+
     def _get_episode_reactive_demand_history(self):
         """return the reactive power histories for all loads in an episode
         """
@@ -474,7 +481,7 @@ class VoltageControl(MultiAgentEnv):
         t = self.steps
         history = self.history
         return self.active_demand_histories[t:t+history, :]
-    
+
     def _get_reactive_demand_history(self):
         """return the history demand
         """
@@ -484,7 +491,7 @@ class VoltageControl(MultiAgentEnv):
 
     def _set_demand_and_pv(self, add_noise=True):
         """optionally update the demand and pv production according to the histories with some i.i.d. gaussian noise
-        """ 
+        """
         pv = copy.copy(self._get_pv_history()[0, :])
 
         # add uncertainty to pv data with unit truncated gaussian (only positive accepted)
@@ -536,9 +543,10 @@ class VoltageControl(MultiAgentEnv):
                 pv = self.powergrid.sgen["p_mw"].loc[self.powergrid.sgen["name"] == f"zone{i+1}"]
                 q = self.powergrid.sgen["q_mvar"].loc[self.powergrid.sgen["name"] == f"zone{i+1}"]
                 clusters[f"zone{i+1}"] = (zone_res_buses, pv, q, sgen_res_buses)
-
+        elif self.args.mode == "centralised":
+            pass
         return clusters
-    
+
     def _take_action(self, actions):
         """take the control variables
         the control variables we consider are the exact reactive power
@@ -558,13 +566,13 @@ class VoltageControl(MultiAgentEnv):
             print (f"This is the reactive demand: \n{self.powergrid.load['q_mvar']}")
             print (f"This is the res_bus: \n{self.powergrid.res_bus}")
             return False
-    
+
     def _clip_reactive_power(self, reactive_actions, active_power):
         """clip the reactive power to the hard safety range
         """
         reactive_power_constraint = np.sqrt(self.s_max**2 - active_power**2)
         return reactive_power_constraint * reactive_actions
-    
+
     def _calc_reward(self, info={}):
         """reward function
         consider 5 possible choices on voltage barrier functions:
@@ -619,7 +627,7 @@ class VoltageControl(MultiAgentEnv):
     def _get_res_bus_v(self):
         v = self.powergrid.res_bus["vm_pu"].sort_index().to_numpy(copy=True)
         return v
-    
+
     def _get_res_bus_active(self):
         active = self.powergrid.res_bus["p_mw"].sort_index().to_numpy(copy=True)
         return active
@@ -635,11 +643,11 @@ class VoltageControl(MultiAgentEnv):
     def _get_sgen_active(self):
         active = self.powergrid.sgen["p_mw"].to_numpy(copy=True)
         return active
-    
+
     def _get_sgen_reactive(self):
         reactive = self.powergrid.sgen["q_mvar"].to_numpy(copy=True)
         return reactive
-    
+
     def _init_render(self):
         from .rendering_voltage_control_env import Viewer
         self.viewer = Viewer()
@@ -654,12 +662,12 @@ class VoltageControl(MultiAgentEnv):
         if not os.path.exists("environments/var_voltage_control/plot_save"):
             os.mkdir("environments/var_voltage_control/plot_save")
 
-        fig = pf_res_plotly(self.powergrid, 
-                            aspectratio=(1.0, 1.0), 
-                            filename="environments/var_voltage_control/plot_save/pf_res_plot.html", 
+        fig = pf_res_plotly(self.powergrid,
+                            aspectratio=(1.0, 1.0),
+                            filename="environments/var_voltage_control/plot_save/pf_res_plot.html",
                             auto_open=False,
                             climits_volt=(0.9, 1.1),
-                            line_width=5, 
+                            line_width=5,
                             bus_size=12,
                             climits_load=(0, 100),
                             cpos_load=1.1,

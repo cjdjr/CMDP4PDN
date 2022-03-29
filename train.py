@@ -42,7 +42,7 @@ elif argv.scenario == 'case322_3min_final':
     env_config_dict["action_bias"] = 0.0
     env_config_dict["action_scale"] = 0.8
 
-assert argv.mode in ['distributed', 'decentralised'], "Please input the correct mode, e.g. distributed or decentralised."
+assert argv.mode in ['distributed', 'decentralised', 'centralised'], "Please input the correct mode, e.g. distributed or decentralised or centralised."
 env_config_dict["mode"] = argv.mode
 env_config_dict["voltage_barrier_type"] = argv.voltage_barrier_type
 env_config_dict["scenario"] = argv.scenario
