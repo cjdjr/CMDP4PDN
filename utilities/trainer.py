@@ -3,7 +3,7 @@ import torch as th
 from torch import optim
 from utilities.util import multinomial_entropy, get_grad_norm, normal_entropy
 from utilities.replay_buffer import TransReplayBuffer, EpisodeReplayBuffer
-
+import wandb
 
 
 class PGTrainer(object):
@@ -113,8 +113,11 @@ class PGTrainer(object):
             self.behaviour_net.evaluation(stat, self)
 
     def logging(self, stat):
-        for k, v in stat.items():
-            self.logger.add_scalar('data/' + k, v, self.episodes)
+        if self.logger is None:
+            wandb.log(stat, self.episodes)
+        else:
+            for k, v in stat.items():
+                self.logger.add_scalar('data/' + k, v, self.episodes)
 
     def print_info(self, stat):
         string = [f'\nEpisode: {self.episodes}']

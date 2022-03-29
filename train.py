@@ -3,7 +3,7 @@ import os
 import argparse
 import yaml
 from tensorboardX import SummaryWriter
-
+import wandb
 from models.model_registry import Model, Strategy
 from environments.var_voltage_control.voltage_control_env import VoltageControl
 from utilities.util import convert, dict2str
@@ -19,6 +19,7 @@ parser.add_argument("--alias", type=str, nargs="?", default="", help="Please ent
 parser.add_argument("--mode", type=str, nargs="?", default="distributed", help="Please enter the mode: distributed or decentralised.")
 parser.add_argument("--scenario", type=str, nargs="?", default="bus33_3min_final", help="Please input the valid name of an environment scenario.")
 parser.add_argument("--voltage-barrier-type", type=str, nargs="?", default="l1", help="Please input the valid voltage barrier type: l1, courant_beltrami, l2, bowl or bump.")
+parser.add_argument("--wandb",  action='store_true')
 argv = parser.parse_args()
 
 # load env args
@@ -44,6 +45,7 @@ elif argv.scenario == 'case322_3min_final':
 assert argv.mode in ['distributed', 'decentralised'], "Please input the correct mode, e.g. distributed or decentralised."
 env_config_dict["mode"] = argv.mode
 env_config_dict["voltage_barrier_type"] = argv.voltage_barrier_type
+env_config_dict["scenario"] = argv.scenario
 
 # load default args
 with open("./args/default.yaml", "r") as f:
@@ -61,9 +63,23 @@ alg_config_dict = {**default_config_dict, **alg_config_dict}
 # define envs
 env = VoltageControl(env_config_dict)
 
+alg_config_dict["algorithm"] = argv.alg
 alg_config_dict["agent_num"] = env.get_num_of_agents()
 alg_config_dict["obs_size"] = env.get_obs_size()
 alg_config_dict["action_dim"] = env.get_total_actions()
+
+if argv.wandb:
+    wandb.init(
+        project='mapdn_cmdp',
+        entity="chelly",
+        name=log_name,
+        group='_'.join(log_name.split('_')[:-1]),
+        save_code=True
+    )
+    wandb.config.update(env_config_dict)
+    wandb.config.update(alg_config_dict)
+    wandb.run.log_code('.')
+
 args = convert(alg_config_dict)
 
 # define the save path
@@ -89,7 +105,10 @@ else:
             os.remove(file_path)
 
 # create the logger
-logger = SummaryWriter(save_path + "tensorboard/" + log_name)
+if argv.wandb:
+    logger = None
+else:
+    logger = SummaryWriter(save_path + "tensorboard/" + log_name)
 
 model = Model[argv.alg]
 

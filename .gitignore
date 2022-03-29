@@ -112,3 +112,4 @@ venv/
 tensorboard/
 model_save/
 data/
+wandb/
