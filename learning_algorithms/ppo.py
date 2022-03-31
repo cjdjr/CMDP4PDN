@@ -36,7 +36,8 @@ class PPO(ReinforcementLearning):
             logits[actions_avail == 0] = -9999999
             action_out = logits
             log_prob_a = multinomials_log_density(actions, logits)
-        ratios = th.exp(log_prob_a.squeeze(-1) - old_log_prob_a.squeeze(-1).detach())
+        # ratios = th.exp(log_prob_a.squeeze(-1) - old_log_prob_a.squeeze(-1).detach())
+        ratios = th.exp(log_prob_a - old_log_prob_a.detach())
         values = behaviour_net.value(state, None).contiguous().view(-1, behaviour_net.n_)
         next_values = behaviour_net.value(next_state, None).contiguous().view(-1, behaviour_net.n_)
         advantages = th.zeros( (batch_size, behaviour_net.n_), dtype=th.float ).to(self.device)
