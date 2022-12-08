@@ -17,7 +17,7 @@ parser.add_argument("--alg", type=str, nargs="?", default="maddpg", help="Please
 parser.add_argument("--env", type=str, nargs="?", default="var_voltage_control", help="Please enter the env name.")
 parser.add_argument("--alias", type=str, nargs="?", default="", help="Please enter the alias for exp control.")
 parser.add_argument("--mode", type=str, nargs="?", default="distributed", help="Please enter the mode: distributed or decentralised.")
-parser.add_argument("--scenario", type=str, nargs="?", default="bus33_3min_final", help="Please input the valid name of an environment scenario.")
+parser.add_argument("--scenario", type=str, nargs="?", default="case33_3min_final", help="Please input the valid name of an environment scenario.")
 parser.add_argument("--voltage-barrier-type", type=str, nargs="?", default="l1", help="Please input the valid voltage barrier type: l1, courant_beltrami, l2, bowl or bump.")
 parser.add_argument("--wandb",  action='store_true')
 argv = parser.parse_args()
@@ -138,4 +138,5 @@ for i in range(args.train_episodes_num):
         th.save({"model_state_dict": train.behaviour_net.state_dict()}, save_path + "model_save/" + log_name + "/model.pt")
         print ("The model is saved!\n")
 
-logger.close()
+if logger is not None:
+    logger.close()
