@@ -45,6 +45,9 @@ class VoltageControl(MultiAgentEnv):
         # set the data path
         self.data_path = args.data_path
 
+        # set the random seed
+        np.random.seed(args.seed)
+
         # load the model of power network
         self.base_powergrid = self._load_network()
 
@@ -68,6 +71,7 @@ class VoltageControl(MultiAgentEnv):
         self.reactive_demand_std = self.reactive_demand_data.values.std(axis=0) / 100.0
         self.pv_std = self.pv_data.values.std(axis=0) / 100.0
         self._set_reactive_power_boundary()
+        self.pv_index = self.base_powergrid.sgen['bus'].sort_index().to_numpy(copy=True)
 
         # define action space and observation space
         self.action_space = ActionSpace(low=-self.args.action_scale+self.args.action_bias, high=self.args.action_scale+self.args.action_bias)
@@ -87,7 +91,7 @@ class VoltageControl(MultiAgentEnv):
         self.obs_size = agents_obs[0].shape[0]
         self.state_size = state.shape[0]
         self.last_v = self.powergrid.res_bus["vm_pu"].sort_index().to_numpy(copy=True)
-        self.last_q = self.powergrid.sgen["q_mvar"].to_numpy(copy=True)
+        # self.last_q = self.powergrid.sgen["q_mvar"].to_numpy(copy=True)
 
         # initialise voltage barrier function
         self.voltage_barrier = VoltageBarrier(self.voltage_loss_type)
@@ -119,6 +123,7 @@ class VoltageControl(MultiAgentEnv):
             # random initialise action
             if self.args.reset_action:
                 self.powergrid.sgen["q_mvar"] = self.get_action()
+                self.last_q = self.powergrid.sgen["q_mvar"].to_numpy(copy=True)
                 self.powergrid.sgen["q_mvar"] = self._clip_reactive_power(self.powergrid.sgen["q_mvar"], self.powergrid.sgen["p_mw"])
             try:
                 pp.runpp(self.powergrid)
@@ -181,6 +186,7 @@ class VoltageControl(MultiAgentEnv):
         last_powergrid = copy.deepcopy(self.powergrid)
 
         # check whether the power balance is unsolvable
+        self.last_q = actions
         solvable = self._take_action(actions)
         if solvable:
             # get the reward of current actions
@@ -209,6 +215,20 @@ class VoltageControl(MultiAgentEnv):
             print (f"Episode terminated at time: {self.steps} with return: {self.sum_rewards:2.4f}.")
 
         return reward, terminated, info
+
+    def predict(self, actions):
+        """function for the interaction between agent and the env each time step
+        """
+        last_powergrid = copy.deepcopy(self.powergrid)
+
+        # check whether the power balance is unsolvable
+        solvable = self._take_action(actions)
+
+        voltage = self.powergrid.res_bus["vm_pu"].sort_index().to_numpy(copy=True)
+        voltage_pv_bus = self.powergrid.res_bus["vm_pu"][self.pv_index].sort_index().to_numpy(copy=True)
+        self.powergrid = last_powergrid
+
+        return voltage, voltage_pv_bus, solvable
 
     def get_state(self):
         """return the global state for the power system
@@ -247,8 +267,8 @@ class VoltageControl(MultiAgentEnv):
                 if not( zone in obs_zone_dict.keys() ):
                     if "demand" in self.state_space:
                         copy_zone_buses = copy.deepcopy(zone_buses)
-                        copy_zone_buses.loc[sgen_bus]["p_mw"] -= pv
-                        copy_zone_buses.loc[sgen_bus]["q_mvar"] -= q
+                        copy_zone_buses.loc[sgen_bus]["p_mw"] += pv
+                        copy_zone_buses.loc[sgen_bus]["q_mvar"] += q
                         obs += list(copy_zone_buses.loc[:, "p_mw"].to_numpy(copy=True))
                         obs += list(copy_zone_buses.loc[:, "q_mvar"].to_numpy(copy=True))
                     if "pv" in self.state_space:
@@ -276,8 +296,8 @@ class VoltageControl(MultiAgentEnv):
                 obs = list()
                 if "demand" in self.state_space:
                     copy_zone_buses = copy.deepcopy(zone_buses)
-                    copy_zone_buses.loc[sgen_buses]["p_mw"] -= pv
-                    copy_zone_buses.loc[sgen_buses]["q_mvar"] -= q
+                    copy_zone_buses.loc[sgen_buses]["p_mw"] += pv
+                    copy_zone_buses.loc[sgen_buses]["q_mvar"] += q
                     obs += list(copy_zone_buses.loc[:, "p_mw"].to_numpy(copy=True))
                     obs += list(copy_zone_buses.loc[:, "q_mvar"].to_numpy(copy=True))
                 if "pv" in self.state_space:
@@ -552,6 +572,7 @@ class VoltageControl(MultiAgentEnv):
         the control variables we consider are the exact reactive power
         of each distributed generator
         """
+        self.now_q = actions
         self.powergrid.sgen["q_mvar"] = self._clip_reactive_power(actions, self.powergrid.sgen["p_mw"])
 
         # solve power flow to get the latest voltage with new reactive power and old deamnd and PV active power
