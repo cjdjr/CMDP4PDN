@@ -49,3 +49,7 @@
 "reward_normalisation": True
 "eval_freq": 20 # evaluation per xxx episodes
 "num_eval_episodes": 10 # number of episodes for an evaluation
+"safety_filter": "none" # "droop" or "none"
+"max_iter": 10
+"gain": 0.05
+"penalty_coff": 0.01
