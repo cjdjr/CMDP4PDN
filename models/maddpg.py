@@ -12,6 +12,9 @@ class MADDPG(Model):
         super(MADDPG, self).__init__(args)
         self.construct_model()
         self.apply(self.init_weights)
+        # load parameters
+        if self.args.safety_filter == "droop" or self.args.safety_filter == "droop_ind":
+            self.safety_filter.pred_network.load_state_dict(th.load(self.args.pred_model_path))
         if target_net != None:
             self.target_net = target_net
             self.reload_params_to_target()
@@ -44,7 +47,7 @@ class MADDPG(Model):
         agent_ids = th.eye(self.n_).unsqueeze(0).repeat(batch_size, 1, 1).to(self.device) # shape = (b, n, n)
         if self.args.agent_id:
             obs_reshape = th.cat( (obs_reshape, agent_ids), dim=-1 ) # shape = (b, n, n*o+n)
-        
+
         # make up inputs
         act_repeat = act.unsqueeze(1).repeat(1, self.n_, 1, 1) # shape = (b, n, n, a)
         act_mask_others = agent_ids.unsqueeze(-1) # shape = (b, n, n, 1)

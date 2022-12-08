@@ -1,9 +1,15 @@
+import os
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import torch as th
 import torch.nn as nn
 import numpy as np
 from collections import namedtuple
 from utilities.util import prep_obs, translate_action
-
+from .safety_filter import Droop_control, None_filter, Droop_control_ind
+from transition.model import transition_model_residual
+from torch.distributions.normal import Normal
 
 
 class Model(nn.Module):
@@ -17,6 +23,17 @@ class Model(nn.Module):
         self.act_dim = self.args.action_dim
         self.Transition = namedtuple('Transition', ('state', 'action', 'log_prob_a', 'value', 'next_value', 'reward', 'next_state', 'done', 'last_step', 'action_avail', 'last_hid', 'hid'))
         self.batchnorm = nn.BatchNorm1d(self.n_)
+        self.pred_model = None
+        if self.args.safety_filter == "none":
+            self.safety_filter = None_filter(self.args)
+        elif self.args.safety_filter == "droop":
+            self.pred_model = transition_model_residual(self.args.pred_model_input_dim, self.args.pred_model_output_dim, self.args.pred_model_hidden_dim)
+            self.pred_model = self.pred_model.to(self.device)
+            self.safety_filter = Droop_control(self.args, self.pred_model)
+        elif self.args.safety_filter == "droop_ind":
+            self.pred_model = transition_model_residual(self.args.pred_model_input_dim, self.args.pred_model_output_dim, self.args.pred_model_hidden_dim)
+            self.pred_model = self.pred_model.to(self.device)
+            self.safety_filter = Droop_control_ind(self.args, self.pred_model)
 
     def reload_params_to_target(self):
         self.target_net.policy_dicts.load_state_dict( self.policy_dicts.state_dict() )
@@ -195,7 +212,7 @@ class Model(nn.Module):
         return values
 
     def train_process(self, stat, trainer):
-        stat_train = {'mean_train_reward': 0}
+        stat_train = {'mean_train_reward': 0, "mean_train_safety_filter_count" : 0, "mean_train_correct_sucessfully" : 0}
 
         if self.args.episodic:
             episode = []
@@ -210,12 +227,21 @@ class Model(nn.Module):
             # current state, action, value
             state_ = prep_obs(state).to(self.device).contiguous().view(1, self.n_, self.obs_dim)
             with th.no_grad():
-                action, action_pol, log_prob_a, _, hid = self.get_actions(state_, status='train', exploration=True, actions_avail=th.tensor(trainer.env.get_avail_actions()), target=False, last_hid=last_hid)
+                action, action_pol, log_prob_a, _, hid = self.get_actions(state_, status='train', exploration=False, actions_avail=th.tensor(trainer.env.get_avail_actions()), target=False, last_hid=last_hid)
                 value = self.value(state_, action_pol)
+                action, count, is_safe, filter_penalty = self.safety_filter.correct(trainer.env, action)
+                # action += th.from_numpy(np.random.randn(self.act_dim) * self.args.fixed_policy_std).to(action.device).float()
+                normal = Normal(action, self.args.fixed_policy_std)
+                action = th.tanh(normal.rsample())
+                action_pol = action.clone()     # (s, a_safe, s', r)
+                stat_train["mean_train_safety_filter_count"] += count
+                stat_train["mean_train_correct_sucessfully"] += is_safe
+
             _, actual = translate_action(self.args, action, trainer.env)
             # reward
             reward, done, info = trainer.env.step(actual)
             reward_repeat = [reward]*trainer.env.get_num_of_agents()
+            reward_repeat = (np.array(reward_repeat) - filter_penalty).tolist()
             # next state, action, value
             next_state = trainer.env.get_obs()
             next_state_ = prep_obs(next_state).to(self.device).contiguous().view(1, self.n_, self.obs_dim)
