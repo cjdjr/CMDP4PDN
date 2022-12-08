@@ -113,3 +113,5 @@ tensorboard/
 model_save/
 data/
 wandb/
+
+transition/bus*
