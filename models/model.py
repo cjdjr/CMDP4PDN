@@ -21,7 +21,7 @@ class Model(nn.Module):
         self.hid_dim = self.args.hid_size
         self.obs_dim = self.args.obs_size
         self.act_dim = self.args.action_dim
-        self.Transition = namedtuple('Transition', ('state', 'action', 'log_prob_a', 'value', 'next_value', 'reward', 'next_state', 'done', 'last_step', 'action_avail', 'last_hid', 'hid'))
+        self.Transition = namedtuple('Transition', ('state', 'action', 'safe_action', 'global_state', 'log_prob_a', 'value', 'next_value', 'reward', 'next_state', 'done', 'last_step', 'action_avail', 'last_hid', 'hid'))
         self.batchnorm = nn.BatchNorm1d(self.n_)
         self.pred_model = None
         if self.args.safety_filter == "none":
@@ -227,23 +227,25 @@ class Model(nn.Module):
             # current state, action, value
             state_ = prep_obs(state).to(self.device).contiguous().view(1, self.n_, self.obs_dim)
             with th.no_grad():
-                action, action_pol, log_prob_a, _, hid = self.get_actions(state_, status='train', exploration=False, actions_avail=th.tensor(trainer.env.get_avail_actions()), target=False, last_hid=last_hid)
+                action, action_pol, log_prob_a, _, hid = self.get_actions(state_, status='train', exploration=True, actions_avail=th.tensor(trainer.env.get_avail_actions()), target=False, last_hid=last_hid)
                 value = self.value(state_, action_pol)
-                action, count, is_safe, filter_penalty = self.safety_filter.correct(trainer.env, action)
-                # action += th.from_numpy(np.random.randn(self.act_dim) * self.args.fixed_policy_std).to(action.device).float()
-                normal = Normal(action, self.args.fixed_policy_std)
-                action = th.tanh(normal.rsample())
-                action_pol = action.clone()     # (s, a_safe, s', r)
+                safe_action_pol, count, is_safe, filter_penalty = self.safety_filter.correct(trainer.env.get_state(), action)
+                # # action += th.from_numpy(np.random.randn(self.act_dim) * self.args.fixed_policy_std).to(action.device).float()
+                # normal = Normal(action, self.args.fixed_policy_std)
+                # action = th.tanh(normal.rsample())
+                # action_pol = action.clone()     # (s, a_safe, s', r)
                 stat_train["mean_train_safety_filter_count"] += count
                 stat_train["mean_train_correct_sucessfully"] += is_safe
 
             _, actual = translate_action(self.args, action, trainer.env)
+            # _, actual = translate_action(self.args, safe_action_pol, trainer.env)
             # reward
             reward, done, info = trainer.env.step(actual)
             reward_repeat = [reward]*trainer.env.get_num_of_agents()
-            reward_repeat = (np.array(reward_repeat) - filter_penalty).tolist()
+            # reward_repeat = (np.array(reward_repeat) - filter_penalty).tolist()
             # next state, action, value
             next_state = trainer.env.get_obs()
+            next_global_state = trainer.env.get_state()
             next_state_ = prep_obs(next_state).to(self.device).contiguous().view(1, self.n_, self.obs_dim)
             with th.no_grad():
                 _, next_action_pol, _, _, _ = self.get_actions(next_state_, status='train', exploration=True, actions_avail=th.tensor(trainer.env.get_avail_actions()), target=False, last_hid=hid)
@@ -253,6 +255,8 @@ class Model(nn.Module):
             done_ = done or t==self.args.max_steps-1
             trans = self.Transition(state,
                                     action_pol.detach().cpu().numpy(),
+                                    safe_action_pol.detach().cpu().numpy(),
+                                    global_state,
                                     log_prob_a,
                                     value.detach().cpu().numpy(),
                                     next_value.detach().cpu().numpy(),
@@ -279,6 +283,7 @@ class Model(nn.Module):
                 break
             # set the next state
             state = next_state
+            global_state = next_global_state
             # set the next last_hid
             last_hid = hid
         trainer.episodes += 1
@@ -335,14 +340,16 @@ class Model(nn.Module):
         last_step = th.tensor(batch.last_step, dtype=th.float).to(self.device).contiguous().view(-1, 1)
         done = th.tensor(batch.done, dtype=th.float).to(self.device).contiguous().view(-1, 1)
         action = th.tensor(np.concatenate(batch.action, axis=0), dtype=th.float).to(self.device)
+        safe_action = th.tensor(np.concatenate(batch.safe_action, axis=0), dtype=th.float).to(self.device)
         log_prob_a = th.tensor(np.concatenate(batch.action, axis=0), dtype=th.float).to(self.device)
         value = th.tensor(np.concatenate(batch.value, axis=0), dtype=th.float).to(self.device)
         next_value = th.tensor(np.concatenate(batch.next_value, axis=0), dtype=th.float).to(self.device)
         state = prep_obs( list( zip(batch.state) ) ).to(self.device)
+        global_state = prep_obs( list( zip(batch.global_state) ) ).to(self.device)
         next_state = prep_obs( list( zip(batch.next_state) ) ).to(self.device)
         action_avail = th.tensor( np.concatenate(batch.action_avail, axis=0) ).to(self.device)
         last_hid = th.tensor(np.concatenate(batch.last_hid, axis=0), dtype=th.float).to(self.device)
         hid = th.tensor(np.concatenate(batch.hid, axis=0), dtype=th.float).to(self.device)
         if self.args.reward_normalisation:
             reward = self.batchnorm(reward).to(self.device)
-        return (state, action, log_prob_a, value, next_value, reward, next_state, done, last_step, action_avail, last_hid, hid)
+        return (state, action, safe_action, global_state, log_prob_a, value, next_value, reward, next_state, done, last_step, action_avail, last_hid, hid)

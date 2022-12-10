@@ -7,9 +7,9 @@ from critics.mlp_critic import MLPCritic
 
 
 
-class MADDPG(Model):
+class SAFEMADDPG(Model):
     def __init__(self, args, target_net=None):
-        super(MADDPG, self).__init__(args)
+        super(SAFEMADDPG, self).__init__(args)
         self.construct_model()
         self.apply(self.init_weights)
         # load parameters
@@ -19,6 +19,7 @@ class MADDPG(Model):
             self.target_net = target_net
             self.reload_params_to_target()
         self.batchnorm = nn.BatchNorm1d(self.args.agent_num).to(self.device)
+        self.beta = getattr(args, "safe_loss_beta", 1.0)
 
     def construct_value_net(self):
         if self.args.agent_id:
@@ -124,5 +125,11 @@ class MADDPG(Model):
             advantages = self.batchnorm(advantages)
         policy_loss = - advantages
         policy_loss = policy_loss.mean()
+        policy_loss += self.beta * self.cal_safe_loss(global_state, actions_pol, self.safety_filter)
         value_loss = deltas.pow(2).mean()
         return policy_loss, value_loss, action_out
+
+    def cal_safe_loss(self, state, actions, safety_filter):
+        with th.no_grad():
+            safe_actions = self.safety_filter.batch_correct(state, actions)
+        return nn.MSELoss()(actions, safe_actions)
