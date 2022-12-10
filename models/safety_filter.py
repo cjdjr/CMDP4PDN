@@ -34,6 +34,7 @@ class Droop_control(Safety_filter):
         self.gain = getattr(args, "gain", 0.1)
         self.penalty_coff = getattr(args, "penalty_coff", 0.01)
         self.pred_network = pred_network
+        self.pv_index = args.pv_index
 
     def one_step_droop_control(self, v):
         if v <= self.va:
@@ -50,18 +51,18 @@ class Droop_control(Safety_filter):
             q = droop_k * (self.vc - v)
         return q
 
-    def imagine_predict(self, env, actions):
+    def imagine_predict(self, state, actions):
         device = next(self.pred_network.parameters()).device
-        input = np.concatenate((env.get_state(), actions))
+        input = np.concatenate((state, actions))
         input = torch.from_numpy(input).to(torch.float32).unsqueeze(0).to(device)
         with torch.no_grad():
             self.pred_network.eval()
             pred_voltage = self.pred_network(input).squeeze(0)
         pred_voltage = pred_voltage.detach().cpu().numpy()
-        pred_voltage_pv_bus = copy.deepcopy(pred_voltage[env.pv_index])
+        pred_voltage_pv_bus = copy.deepcopy(pred_voltage[self.pv_index])
         return pred_voltage, pred_voltage_pv_bus, True
 
-    def correct(self, env, q):
+    def correct(self, state, q):
         q_last_last = q.detach().squeeze().cpu().numpy()
         q_last = q.detach().squeeze().cpu().numpy()
         last_voltage_pv_bus = None
@@ -69,9 +70,10 @@ class Droop_control(Safety_filter):
         safe = 0
         for i in range(self.max_iter):
             if self.pred_network is None:
+                raise NotImplementedError()
                 voltage, voltage_pv_bus, solvable = env.predict(self.translate_action(q_last))
             else:
-                voltage, voltage_pv_bus, solvable = self.imagine_predict(env, self.translate_action(q_last))
+                voltage, voltage_pv_bus, solvable = self.imagine_predict(state, self.translate_action(q_last))
             # crash
             if not solvable:
                 q_last = q_last_last
@@ -95,6 +97,14 @@ class Droop_control(Safety_filter):
         #     filter_penalty += 2 * self.penalty_coff
 
         return torch.tensor(q_last, dtype=q.dtype, device=q.device).view(q.shape), count, safe, filter_penalty
+
+    def batch_correct(self, state, q):
+        batch_size = state.shape[0]
+        res = []
+        for i in range(batch_size):
+            safe_action, _, _, _, = self.correct(state[i].detach().cpu().numpy(), q[i])
+            res.append(safe_action)
+        return torch.stack(res, dim=0)
 
 class Droop_control_ind(Droop_control):
     def __init__(self, args, pred_network = None):

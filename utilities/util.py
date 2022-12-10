@@ -142,6 +142,8 @@ def prep_obs(state=[]):
     # for single episode
     elif len(state.shape) == 4:
         state = np.concatenate(state, axis=0)
+    elif len(state.shape) == 3:
+        state = np.concatenate(state, axis=0)
     else:
         raise RuntimeError('The shape of the observation is incorrect.')
     return th.tensor(state).float()
