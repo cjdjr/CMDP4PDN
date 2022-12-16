@@ -36,6 +36,38 @@ class SAFEMADDPG(Model):
         self.construct_value_net()
         self.construct_policy_net()
 
+    def construct_policy_net(self):
+        if self.args.agent_id:
+            input_shape = self.obs_dim + self.n_
+        else:
+            input_shape = self.obs_dim
+
+        if self.args.agent_type == 'mlp':
+            if self.args.gaussian_policy:
+                from agents.mlp_agent_gaussian import MLPAgent
+            else:
+                from agents.mlp_agent import MLPAgent
+            Agent = MLPAgent
+        elif self.args.agent_type == 'rnn':
+            if self.args.gaussian_policy:
+                from agents.rnn_agent_gaussian import RNNAgent
+            else:
+                from agents.rnn_agent import RNNAgent
+            Agent = RNNAgent
+        elif self.args.agent_type == 'diffusion':
+            if self.args.gaussian_policy:
+                NotImplementedError()
+            else:
+                from agents.diffusion_agent import Diffusion
+            Agent = Diffusion
+        else:
+            NotImplementedError()
+
+        if self.args.shared_params:
+            self.policy_dicts = nn.ModuleList([ Agent(input_shape, self.args) ])
+        else:
+            self.policy_dicts = nn.ModuleList([ Agent(input_shape, self.args) for _ in range(self.n_) ])
+
     def value(self, obs, act):
         # obs_shape = (b, n, o)
         # act_shape = (b, n, a)
@@ -123,9 +155,13 @@ class SAFEMADDPG(Model):
         advantages = values_pol
         if self.args.normalize_advantages:
             advantages = self.batchnorm(advantages)
+        lmbda = (self.beta / advantages.detach().abs().mean())
         policy_loss = - advantages
-        policy_loss = policy_loss.mean()
-        policy_loss += self.beta * self.cal_safe_loss(global_state, actions_pol, self.safety_filter)
+        policy_loss = lmbda * policy_loss.mean()
+        if self.args.agent_type == "diffusion":
+            policy_loss += self.cal_diffusion_loss(state, global_state, actions_pol, self.safety_filter)
+        else:
+            policy_loss += self.cal_safe_loss(global_state, actions_pol, self.safety_filter)
         value_loss = deltas.pow(2).mean()
         return policy_loss, value_loss, action_out
 
@@ -133,3 +169,16 @@ class SAFEMADDPG(Model):
         with th.no_grad():
             safe_actions = self.safety_filter.batch_correct(state, actions)
         return nn.MSELoss()(actions, safe_actions)
+
+    def cal_diffusion_loss(self, obs, state, actions, safety_filter):
+        with th.no_grad():
+            safe_actions = safety_filter.batch_correct(state, actions)
+        assert self.args.shared_params == True
+        assert self.args.agent_id == True
+        batch_size = obs.size(0)
+        agent_ids = th.eye(self.n_).unsqueeze(0).repeat(batch_size, 1, 1).to(self.device) # shape = (b, n, n)
+        obs = th.cat( (obs, agent_ids), dim=-1 ) # shape = (b, n, n+o)
+        obs = obs.contiguous().view(batch_size*self.n_, -1) # shape = (b*n, n+o/o)
+        agent_policy = self.policy_dicts[0]
+        bc_loss = agent_policy.loss(safe_actions.view(batch_size*self.n_, -1), obs)
+        return bc_loss

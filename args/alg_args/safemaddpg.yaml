@@ -1,7 +1,7 @@
 alg: "maddpg"
 
 alg_args:
-    "policy_lrate": 1.0e-4
+    "policy_lrate": 1.0e-3
     "value_lrate": 1.0e-4
     "gaussian_policy": False
     "action_enforcebound": True
@@ -19,4 +19,9 @@ alg_args:
     "pred_model_path":  "/data1/wangmr/CMDP4PDN/transition/bus322/322_resnet_0_best_model" # "/data1/wangmr/CMDP4PDN/transition/bus322/resnet_1_best_model"
 
     # hyperparameters during training
-    "safe_loss_beta": 20.   #  ,10,50
+    "safe_loss_beta": 0.   #  ,10,50
+
+    # diffusion_model
+    "agent_type": "diffusion"
+    "beta_schedule": "linear"
+    "n_timesteps": 5
