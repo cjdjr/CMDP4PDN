@@ -10,7 +10,7 @@ from .mappo import MAPPO
 from .facmaddpg import FACMADDPG
 from .droop_control import DroopControlAgent
 from .safemaddpg import SAFEMADDPG
-
+from .acsafemaddpg import ACSAFEMADDPG
 
 
 Model = dict(maddpg=MADDPG,
@@ -24,7 +24,8 @@ Model = dict(maddpg=MADDPG,
              mappo=MAPPO,
              facmaddpg=FACMADDPG,
              droopcontrol=DroopControlAgent,
-             safemaddpg=SAFEMADDPG
+             safemaddpg=SAFEMADDPG,
+             acsafemaddpg=ACSAFEMADDPG,
             )
 
 Strategy = dict(maddpg='pg',
@@ -38,5 +39,6 @@ Strategy = dict(maddpg='pg',
                 mappo='pg',
                 facmaddpg='pg',
                 droopcontrol='pg',
-                safemaddpg='pg'
+                safemaddpg='pg',
+                acsafemaddpg='pg'
             )

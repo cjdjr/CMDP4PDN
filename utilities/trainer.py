@@ -24,6 +24,8 @@ class PGTrainer(object):
                 self.replay_buffer = EpisodeReplayBuffer( int(self.args.replay_buffer_size) )
         self.env = env
         self.policy_optimizer = optim.RMSprop( self.behaviour_net.policy_dicts.parameters(), lr=args.policy_lrate, alpha=0.99, eps=1e-5 )
+        if hasattr(self.behaviour_net, 'correction_dicts'):
+            self.correction_optimizer = optim.RMSprop( self.behaviour_net.correction_dicts.parameters(), lr=args.correction_lrate, alpha=0.99, eps=1e-5 )
         self.value_optimizer = optim.RMSprop( self.behaviour_net.value_dicts.parameters(), lr=args.value_lrate, alpha=0.99, eps=1e-5 )
         if self.args.mixer:
             self.mixer_optimizer = optim.RMSprop( self.behaviour_net.mixer.parameters(), lr=args.mixer_lrate, alpha=0.99, eps=1e-5 )
@@ -33,8 +35,8 @@ class PGTrainer(object):
         self.entr = self.args.entr
 
     def get_loss(self, batch):
-        policy_loss, value_loss, logits = self.behaviour_net.get_loss(batch)
-        return policy_loss, value_loss, logits
+        policy_loss, value_loss, correction_loss, logits = self.behaviour_net.get_loss(batch)
+        return policy_loss, value_loss, correction_loss, logits
 
     def policy_compute_grad(self, stat, loss, retain_graph):
         if self.entr > 0:
@@ -48,6 +50,10 @@ class PGTrainer(object):
             stat['mean_train_entropy'] = entropy.item()
         policy_loss.backward(retain_graph=retain_graph)
 
+    def correction_compute_grad(self, stat, loss, retain_graph):
+        correction_loss, _, _ = loss
+        correction_loss.backward(retain_graph=retain_graph)
+
     def value_compute_grad(self, value_loss, retain_graph):
         value_loss.backward(retain_graph=retain_graph)
 
@@ -59,6 +65,11 @@ class PGTrainer(object):
         batch = self.replay_buffer.get_batch(self.args.batch_size)
         batch = self.behaviour_net.Transition(*zip(*batch))
         self.policy_transition_process(stat, batch)
+
+    def correction_replay_process(self, stat):
+        batch = self.replay_buffer.get_batch(self.args.batch_size)
+        batch = self.behaviour_net.Transition(*zip(*batch))
+        self.correction_transition_process(stat, batch)
 
     def value_replay_process(self, stat):
         batch = self.replay_buffer.get_batch(self.args.batch_size)
@@ -72,10 +83,10 @@ class PGTrainer(object):
 
     def policy_transition_process(self, stat, trans):
         if self.args.continuous:
-            policy_loss, _, logits = self.get_loss(trans)
-            means, log_stds = logits
+            policy_loss, _, _, logits = self.get_loss(trans)
+            means, log_stds, _  = logits
         else:
-            policy_loss, _, logits = self.get_loss(trans)
+            policy_loss, _, _, logits = self.get_loss(trans)
         self.policy_optimizer.zero_grad()
         if self.args.continuous:
             self.policy_compute_grad(stat, (policy_loss, means, log_stds), False)
@@ -87,8 +98,26 @@ class PGTrainer(object):
         stat['mean_train_policy_grad_norm'] = policy_grad_norms.item() # np.array(policy_grad_norms).mean()
         stat['mean_train_policy_loss'] = policy_loss.clone().mean().item()
 
+    def correction_transition_process(self, stat, trans):
+        if self.args.continuous:
+            _, _, correction_loss, logits = self.get_loss(trans)
+            means, log_stds, _  = logits
+        else:
+            _, _, correction_loss, logits = self.get_loss(trans)
+        self.correction_optimizer.zero_grad()
+        if self.args.continuous:
+            self.correction_compute_grad(stat, (correction_loss, means, log_stds), False)
+        else:
+            self.correction_compute_grad(stat, (correction_loss, logits), False)
+
+        param = self.correction_optimizer.param_groups[0]['params']
+        correction_grad_norms = get_grad_norm(self.args, param)
+        self.correction_optimizer.step()
+        stat['mean_train_correction_grad_norm'] = correction_grad_norms.item() # np.array(policy_grad_norms).mean()
+        stat['mean_train_correction_loss'] = correction_loss.clone().mean().item()
+
     def value_transition_process(self, stat, trans):
-        _, value_loss, _ = self.get_loss(trans)
+        _, value_loss, _, _ = self.get_loss(trans)
         self.value_optimizer.zero_grad()
         self.value_compute_grad(value_loss, False)
         param = self.value_optimizer.param_groups[0]['params']
@@ -98,7 +127,7 @@ class PGTrainer(object):
         stat['mean_train_value_loss'] = value_loss.clone().mean().item()
 
     def mixer_transition_process(self, stat, trans):
-        _, value_loss, _ = self.get_loss(trans)
+        _, value_loss, _, _ = self.get_loss(trans)
         self.mixer_optimizer.zero_grad()
         self.value_compute_grad(value_loss, False)
         param = self.mixer_optimizer.param_groups[0]['params']

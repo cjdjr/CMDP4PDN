@@ -1,0 +1,31 @@
+alg: "maddpg"
+
+alg_args:
+    "policy_lrate": 1.0e-3
+    "value_lrate": 1.0e-3
+    "gaussian_policy": False
+    "action_enforcebound": True
+
+    # filter
+    "safety_filter": "droop" # "droop" or "none" or "droop_ind"
+    "max_iter": 20
+    "gain": 0.05
+    "penalty_coff": 0.01
+
+    # pred_model
+    "pred_model_input_dim": 630 # 1402,630,150
+    "pred_model_output_dim": 141 # 322,141,33
+    "pred_model_hidden_dim": 512
+    "pred_model_path":  "/data1/wangmr/CMDP4PDN/transition/bus141/141_resnet_0_best_model" # "/data1/wangmr/CMDP4PDN/transition/bus322/resnet_1_best_model"
+
+    # hyperparameters during training
+    "safe_loss_beta": 10   #  1, 10,
+
+    # action correction
+    "correction_lrate": 1.0e-3
+    "correction_update_epochs": 2
+
+    # # diffusion_model
+    # "agent_type": "diffusion"
+    # "beta_schedule": "linear"
+    # "n_timesteps": 5

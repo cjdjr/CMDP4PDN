@@ -62,6 +62,8 @@ class Model(nn.Module):
             if replay_cond:
                 for _ in range(self.args.value_update_epochs):
                     trainer.value_replay_process(stat)
+                for _ in range(self.args.correction_update_epochs):
+                    trainer.correction_replay_process(stat)
                 for _ in range(self.args.policy_update_epochs):
                     trainer.policy_replay_process(stat)
                 if self.args.mixer:
