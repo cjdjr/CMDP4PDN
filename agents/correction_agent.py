@@ -72,7 +72,7 @@ class MLPAgent1(nn.Module):
 
         act_rep = torch.cat((self.act_enc(actions), self.id_emb(ids)),dim=-1)
         if self.args.layernorm:
-            act_rep = self.layernorm(x)
+            act_rep = self.layernorm(act_rep)
         act_rep = self.hid_activation(act_rep)
 
         x = self.hid_activation(self.fc1(torch.cat((x, act_rep),dim=-1)))
