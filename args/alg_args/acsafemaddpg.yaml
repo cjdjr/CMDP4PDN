@@ -1,8 +1,8 @@
-alg: "maddpg"
+alg: "acsafemaddpg"
 
 alg_args:
-    "policy_lrate": 1.0e-3
-    "value_lrate": 1.0e-3
+    "policy_lrate": 1.0e-4
+    "value_lrate": 1.0e-4
     "gaussian_policy": False
     "action_enforcebound": True
 
@@ -13,16 +13,16 @@ alg_args:
     "penalty_coff": 0.01
 
     # pred_model
-    "pred_model_input_dim": 630 # 1402,630,150
-    "pred_model_output_dim": 141 # 322,141,33
+    "pred_model_input_dim": 1402 # 1402,630,150
+    "pred_model_output_dim": 322 # 322,141,33
     "pred_model_hidden_dim": 512
-    "pred_model_path":  "/data1/wangmr/CMDP4PDN/transition/bus141/141_resnet_0_best_model" # "/data1/wangmr/CMDP4PDN/transition/bus322/resnet_1_best_model"
+    "pred_model_path":  "/data1/wangmr/CMDP4PDN/transition/bus322/322_resnet_0_best_model" # "/data1/wangmr/CMDP4PDN/transition/bus322/resnet_1_best_model"
 
     # hyperparameters during training
-    "safe_loss_beta": 10   #  1, 10,
+    "safe_loss_beta": 1.   #  1, 10,
 
     # action correction
-    "correction_lrate": 1.0e-3
+    "correction_lrate": 5.0e-5
     "correction_update_epochs": 2
 
     # # diffusion_model

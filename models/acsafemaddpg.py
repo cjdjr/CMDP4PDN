@@ -65,9 +65,10 @@ class ACSAFEMADDPG(Model):
 
         if self.args.shared_params:
             self.policy_dicts = nn.ModuleList([ Agent(input_shape, self.args) ])
-            from agents.correction_agent import MLPAgent
-            Agent = MLPAgent
-            self.correction_dicts = nn.ModuleList([ Agent(input_shape, self.args) ])
+            if self.args.algorithm == "acsafemaddpg":
+                from agents.correction_agent import PreAgent, MLPAgent
+                self.policy_dicts = nn.ModuleList([ PreAgent(input_shape, self.args) ])
+                self.correction_dicts = nn.ModuleList([ MLPAgent(input_shape, self.args) ])
         else:
             self.policy_dicts = nn.ModuleList([ Agent(input_shape, self.args) for _ in range(self.n_) ])
 
@@ -131,7 +132,7 @@ class ACSAFEMADDPG(Model):
             obs = obs.contiguous().view(batch_size*self.n_, -1) # shape = (b*n, n+o/o)
             ids = ids.contiguous().view(batch_size*self.n_)
             agent_policy = self.policy_dicts[0]
-            pre_means, log_stds, hiddens = agent_policy(obs, last_hid)
+            pre_means, log_stds, hiddens, obs_enc = agent_policy(obs, last_hid)
             agent_correction = self.correction_dicts[0]
             corr_means = agent_correction(obs, pre_means, ids, hiddens)
             means = pre_means + corr_means
