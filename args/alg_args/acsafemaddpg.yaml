@@ -19,11 +19,11 @@ alg_args:
     "pred_model_path":  "/data1/wangmr/CMDP4PDN/transition/bus322/322_resnet_0_best_model" # "/data1/wangmr/CMDP4PDN/transition/bus322/resnet_1_best_model"
 
     # hyperparameters during training
-    "safe_loss_beta": 1.   #  1, 10,
+    "safe_loss_beta": 10.   #  1, 10,
 
     # action correction
-    "correction_lrate": 5.0e-5
-    "correction_update_epochs": 2
+    "correction_lrate": 1.0e-4
+    "correction_update_epochs": 10
 
     # # diffusion_model
     # "agent_type": "diffusion"

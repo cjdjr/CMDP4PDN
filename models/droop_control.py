@@ -34,7 +34,7 @@ class DroopControlAgent(Model):
                 last_q = self.translate_action_env2nn(trainer.env.last_q)
                 for t in range(self.args.max_steps):
                     state_ = prep_obs(state).to(self.device).contiguous().view(1, self.n_, self.obs_dim)
-                    action, _, _, _ = self.safety_filter.correct(trainer.env, last_q)
+                    action, _, _, _ = self.safety_filter.correct(trainer.env.get_state(), last_q)
                     _, actual = translate_action(self.args, action, trainer.env)
                     reward, done, info = trainer.env.step(actual)
                     done_ = done or t==self.args.max_steps-1

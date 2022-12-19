@@ -6,14 +6,14 @@ alg_args:
     "gaussian_policy": False
     "action_enforcebound": True
 
-    # filter
-    "safety_filter": "droop_ind" # "droop" or "none" or "droop_ind"
-    "max_iter": 10
-    "gain": 0.05
-    "penalty_coff": 0.01
+    # # filter
+    # "safety_filter": "droop_ind" # "droop" or "none" or "droop_ind"
+    # "max_iter": 10
+    # "gain": 0.05
+    # "penalty_coff": 0.01
 
-    # pred_model
-    "pred_model_input_dim": 150 # 1402,630,150
-    "pred_model_output_dim": 33 # 322,141,33
-    "pred_model_hidden_dim": 512
-    "pred_model_path":  "/data1/wangmr/CMDP4PDN/transition/bus33/33_resnet_0_best_model" # "/data1/wangmr/CMDP4PDN/transition/bus322/resnet_1_best_model"
+    # # pred_model
+    # "pred_model_input_dim": 150 # 1402,630,150
+    # "pred_model_output_dim": 33 # 322,141,33
+    # "pred_model_hidden_dim": 512
+    # "pred_model_path":  "/data1/wangmr/CMDP4PDN/transition/bus33/33_resnet_0_best_model" # "/data1/wangmr/CMDP4PDN/transition/bus322/resnet_1_best_model"

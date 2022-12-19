@@ -125,4 +125,4 @@ class MADDPG(Model):
         policy_loss = - advantages
         policy_loss = policy_loss.mean()
         value_loss = deltas.pow(2).mean()
-        return policy_loss, value_loss, action_out
+        return policy_loss, value_loss, None, action_out

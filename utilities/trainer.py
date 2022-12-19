@@ -84,7 +84,7 @@ class PGTrainer(object):
     def policy_transition_process(self, stat, trans):
         if self.args.continuous:
             policy_loss, _, _, logits = self.get_loss(trans)
-            means, log_stds, _  = logits
+            means, log_stds, *_  = logits
         else:
             policy_loss, _, _, logits = self.get_loss(trans)
         self.policy_optimizer.zero_grad()
@@ -101,7 +101,7 @@ class PGTrainer(object):
     def correction_transition_process(self, stat, trans):
         if self.args.continuous:
             _, _, correction_loss, logits = self.get_loss(trans)
-            means, log_stds, _  = logits
+            means, log_stds, *_  = logits
         else:
             _, _, correction_loss, logits = self.get_loss(trans)
         self.correction_optimizer.zero_grad()
