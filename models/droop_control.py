@@ -8,6 +8,8 @@ class DroopControlAgent(Model):
 
     def __init__(self, args, target_net=None):
         super(DroopControlAgent, self).__init__(args)
+        if self.args.safety_filter == "droop" or self.args.safety_filter == "droop_ind":
+            self.safety_filter.pred_network.load_state_dict(th.load(self.args.pred_model_path))
         self.args = args
         assert(isinstance(self.safety_filter, Droop_control))
         self.policy_dicts = th.nn.ModuleList([th.nn.Linear(1,1)])
