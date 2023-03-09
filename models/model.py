@@ -21,7 +21,7 @@ class Model(nn.Module):
         self.hid_dim = self.args.hid_size
         self.obs_dim = self.args.obs_size
         self.act_dim = self.args.action_dim
-        self.Transition = namedtuple('Transition', ('state', 'action', 'safe_action', 'global_state', 'log_prob_a', 'value', 'next_value', 'reward', 'next_state', 'done', 'last_step', 'action_avail', 'last_hid', 'hid'))
+        self.Transition = namedtuple('Transition', ('state', 'action', 'safe_action', 'global_state', 'log_prob_a', 'value', 'next_value', 'reward', 'cost', 'next_state', 'done', 'last_step', 'action_avail', 'last_hid', 'hid'))
         self.batchnorm = nn.BatchNorm1d(self.n_)
         self.pred_model = None
         if self.args.safety_filter == "none":
@@ -70,6 +70,9 @@ class Model(nn.Module):
                 if self.args.mixer:
                     for _ in range(self.args.mixer_update_epochs):
                         trainer.mixer_replay_process(stat)
+                if hasattr(self, 'multiplier'):
+                    for _ in range(self.args.lambda_update_epochs):
+                        trainer.lambda_replay_process(stat)
                 # TODO: hard code
                 # clear replay buffer for on-policy algorithm
                 if self.__class__.__name__ in ["COMA", "IAC", "IPPO", "MAPPO"] :
@@ -211,7 +214,7 @@ class Model(nn.Module):
         assert isinstance(act, np.ndarray)
         obs = th.tensor(obs).to(self.device).float()
         act = th.tensor(act).to(self.device).float()
-        values = self.value(obs, act)
+        values, *_ = self.value(obs, act)
         return values
 
     def train_process(self, stat, trainer):
@@ -231,7 +234,7 @@ class Model(nn.Module):
             state_ = prep_obs(state).to(self.device).contiguous().view(1, self.n_, self.obs_dim)
             with th.no_grad():
                 action, action_pol, log_prob_a, _, hid = self.get_actions(state_, status='train', exploration=True, actions_avail=th.tensor(trainer.env.get_avail_actions()), target=False, last_hid=last_hid)
-                value = self.value(state_, action_pol)
+                value, *_ = self.value(state_, action_pol)
                 safe_action_pol, count, is_safe, filter_penalty = self.safety_filter.correct(trainer.env.get_state(), action)
                 # # action += th.from_numpy(np.random.randn(self.act_dim) * self.args.fixed_policy_std).to(action.device).float()
                 # normal = Normal(action, self.args.fixed_policy_std)
@@ -246,13 +249,14 @@ class Model(nn.Module):
             reward, done, info = trainer.env.step(actual)
             reward_repeat = [reward]*trainer.env.get_num_of_agents()
             # reward_repeat = (np.array(reward_repeat) - filter_penalty).tolist()
+            out_of_control = [info['percentage_of_v_out_of_control']] * trainer.env.get_num_of_agents()
             # next state, action, value
             next_state = trainer.env.get_obs()
             next_global_state = trainer.env.get_state()
             next_state_ = prep_obs(next_state).to(self.device).contiguous().view(1, self.n_, self.obs_dim)
             with th.no_grad():
                 _, next_action_pol, _, _, _ = self.get_actions(next_state_, status='train', exploration=True, actions_avail=th.tensor(trainer.env.get_avail_actions()), target=False, last_hid=hid)
-                next_value = self.value(next_state_, next_action_pol)
+                next_value, *_ = self.value(next_state_, next_action_pol)
             # store trajectory
             if isinstance(done, list): done = np.sum(done)
             done_ = done or t==self.args.max_steps-1
@@ -264,6 +268,7 @@ class Model(nn.Module):
                                     value.detach().cpu().numpy(),
                                     next_value.detach().cpu().numpy(),
                                     np.array(reward_repeat),
+                                    np.array(out_of_control),
                                     next_state,
                                     done,
                                     done_,
@@ -340,6 +345,7 @@ class Model(nn.Module):
 
     def unpack_data(self, batch):
         reward = th.tensor(batch.reward, dtype=th.float).to(self.device)
+        cost = th.tensor(batch.cost, dtype=th.float).to(self.device)
         last_step = th.tensor(batch.last_step, dtype=th.float).to(self.device).contiguous().view(-1, 1)
         done = th.tensor(batch.done, dtype=th.float).to(self.device).contiguous().view(-1, 1)
         action = th.tensor(np.concatenate(batch.action, axis=0), dtype=th.float).to(self.device)
@@ -355,4 +361,4 @@ class Model(nn.Module):
         hid = th.tensor(np.concatenate(batch.hid, axis=0), dtype=th.float).to(self.device)
         if self.args.reward_normalisation:
             reward = self.batchnorm(reward).to(self.device)
-        return (state, action, safe_action, global_state, log_prob_a, value, next_value, reward, next_state, done, last_step, action_avail, last_hid, hid)
+        return (state, action, safe_action, global_state, log_prob_a, value, next_value, reward, cost, next_state, done, last_step, action_avail, last_hid, hid)

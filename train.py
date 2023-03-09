@@ -13,7 +13,7 @@ from utilities.trainer import PGTrainer
 
 parser = argparse.ArgumentParser(description="Train rl agent.")
 parser.add_argument("--save-path", type=str, nargs="?", default="./", help="Please enter the directory of saving model.")
-parser.add_argument("--alg", type=str, nargs="?", default="safemaddpg", help="Please enter the alg name.")
+parser.add_argument("--alg", type=str, nargs="?", default="acsafemaddpg", help="Please enter the alg name.")
 parser.add_argument("--env", type=str, nargs="?", default="var_voltage_control", help="Please enter the env name.")
 parser.add_argument("--alias", type=str, nargs="?", default="", help="Please enter the alias for exp control.")
 parser.add_argument("--mode", type=str, nargs="?", default="distributed", help="Please enter the mode: distributed or decentralised.")

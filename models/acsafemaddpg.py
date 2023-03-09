@@ -3,7 +3,7 @@ import torch.nn as nn
 import numpy as np
 from utilities.util import select_action
 from models.model import Model
-from critics.mlp_critic import MLPCritic
+from critics.mlp_critic import MLPCritic, MLP2HCritic
 
 
 
@@ -20,6 +20,7 @@ class ACSAFEMADDPG(Model):
             self.reload_params_to_target()
         self.batchnorm = nn.BatchNorm1d(self.args.agent_num).to(self.device)
         self.beta = getattr(args, "safe_loss_beta", 1.0)
+        self.multiplier = th.nn.Parameter(th.tensor(args.init_lambda,device=self.device))
 
     def construct_value_net(self):
         if self.args.agent_id:
@@ -28,9 +29,9 @@ class ACSAFEMADDPG(Model):
             input_shape = (self.obs_dim + self.act_dim) * self.n_
         output_shape = 1
         if self.args.shared_params:
-            self.value_dicts = nn.ModuleList( [ MLPCritic(input_shape, output_shape, self.args) ] )
+            self.value_dicts = nn.ModuleList( [ MLP2HCritic(input_shape, output_shape, self.args) ] )
         else:
-            self.value_dicts = nn.ModuleList( [ MLPCritic(input_shape, output_shape, self.args) for _ in range(self.n_) ] )
+            self.value_dicts = nn.ModuleList( [ MLP2HCritic(input_shape, output_shape, self.args) for _ in range(self.n_) ] )
 
     def construct_model(self):
         self.construct_value_net()
@@ -106,16 +107,20 @@ class ACSAFEMADDPG(Model):
 
         if self.args.shared_params:
             agent_value = self.value_dicts[0]
-            values, _ = agent_value(inputs, None)
+            values, costs, _ = agent_value(inputs, None)
             values = values.contiguous().view(batch_size, self.n_, 1)
+            costs = costs.contiguous().view(batch_size, self.n_, 1)
         else:
             values = []
+            costs = []
             for i, agent_value in enumerate(self.value_dicts):
-                value, _ = agent_value(inputs[:, i, :], None)
+                value, cost, _ = agent_value(inputs[:, i, :], None)
                 values.append(value)
+                costs.append(cost)
             values = th.stack(values, dim=1)
+            costs = th.stack(costs, dim=1)
 
-        return values
+        return values, costs
 
     def policy(self, obs, schedule=None, last_act=None, last_hid=None, info={}, stat={}):
         # obs_shape = (b, n, o)
@@ -174,35 +179,48 @@ class ACSAFEMADDPG(Model):
 
     def get_loss(self, batch):
         batch_size = len(batch.state)
-        state, actions, safe_actions, global_state, old_log_prob_a, old_values, old_next_values, rewards, next_state, done, last_step, actions_avail, last_hids, hids = self.unpack_data(batch)
+        state, actions, safe_actions, global_state, old_log_prob_a, old_values, old_next_values, rewards, costs, next_state, done, last_step, actions_avail, last_hids, hids = self.unpack_data(batch)
         _, actions_pol, log_prob_a, action_out, _ = self.get_actions(state, status='train', exploration=False, actions_avail=actions_avail, target=False, last_hid=last_hids)
         if self.args.double_q:
             _, next_actions, _, _, _ = self.get_actions(next_state, status='train', exploration=False, actions_avail=actions_avail, target=False, last_hid=hids)
         else:
             _, next_actions, _, _, _ = self.get_actions(next_state, status='train', exploration=False, actions_avail=actions_avail, target=True, last_hid=hids)
-        values_pol = self.value(state, actions_pol).contiguous().view(-1, self.n_)
-        values = self.value(state, actions).contiguous().view(-1, self.n_)
-        next_values = self.target_net.value(next_state, next_actions.detach()).contiguous().view(-1, self.n_)
+        compose = self.value(state, actions_pol)
+        values_pol, costs_pol = compose[0].contiguous().view(-1, self.n_), compose[1].contiguous().view(-1, self.n_)
+        compose = self.value(state, actions)
+        values, costs = compose[0].contiguous().view(-1, self.n_), compose[1].contiguous().view(-1, self.n_)
+        compose = self.target_net.value(next_state, next_actions.detach())
+        next_values, next_costs = compose[0].contiguous().view(-1, self.n_), compose[1].contiguous().view(-1, self.n_)
         returns = th.zeros((batch_size, self.n_), dtype=th.float).to(self.device)
+        cost_returns = th.zeros((batch_size, self.n_), dtype=th.float).to(self.device)
         assert values_pol.size() == next_values.size()
         assert returns.size() == values.size()
         done = done.to(self.device)
         returns = rewards + self.args.gamma * (1 - done) * next_values.detach()
+        cost_returns = costs + self.args.cost_gamma * (1-done) * next_costs.detach()
         deltas = returns - values
+        cost_deltas = cost_returns - costs
         advantages = values_pol
+        cost_advantages = costs_pol
         if self.args.normalize_advantages:
             advantages = self.batchnorm(advantages)
         policy_loss = - advantages
         policy_loss = policy_loss.mean()
-        value_loss = deltas.pow(2).mean()
+        value_loss = deltas.pow(2).mean() + cost_deltas.pow(2).mean()
         pre_actions_pol = action_out[-1]
-        values_pre_pol = self.value(state, pre_actions_pol).contiguous().view(-1, self.n_)
+        values_pre_pol = self.value(state, pre_actions_pol)[0].contiguous().view(-1, self.n_)
         correction_loss = th.maximum(th.zeros_like(values_pol), values_pre_pol - values_pol).mean()
         correction_loss += self.beta * self.cal_safe_loss(global_state, actions_pol, self.safety_filter)
-        return policy_loss, value_loss, correction_loss, action_out
+        correction_loss += self.multiplier * cost_advantages.mean()
+        lambda_loss = (cost_returns.detach().mean() - self.args.cost_limit) * self.multiplier
+        return policy_loss, value_loss, correction_loss, lambda_loss, action_out
 
     def cal_safe_loss(self, state, actions, safety_filter):
         with th.no_grad():
             safe_actions = safety_filter.batch_correct(state, actions)
         return nn.MSELoss()(actions, safe_actions)
 
+    def reset_multiplier(self):
+        if self.multiplier < 0:
+            with th.no_grad():
+                self.multiplier = th.nn.Parameter(th.tensor(0.,device=self.device))

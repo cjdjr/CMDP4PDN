@@ -29,3 +29,10 @@ alg_args:
     # "agent_type": "diffusion"
     # "beta_schedule": "linear"
     # "n_timesteps": 5
+
+    # constraint
+    "lambda_lrate": 1.0e-3
+    "cost_gamma": 0.9
+    "init_lambda": 1.0
+    "lambda_update_epochs": 1
+    "cost_limit": 0.05

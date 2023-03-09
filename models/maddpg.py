@@ -104,7 +104,7 @@ class MADDPG(Model):
 
     def get_loss(self, batch):
         batch_size = len(batch.state)
-        state, actions, safe_actions, global_state, old_log_prob_a, old_values, old_next_values, rewards, next_state, done, last_step, actions_avail, last_hids, hids = self.unpack_data(batch)
+        state, actions, safe_actions, global_state, old_log_prob_a, old_values, old_next_values, rewards, costs, next_state, done, last_step, actions_avail, last_hids, hids = self.unpack_data(batch)
         _, actions_pol, log_prob_a, action_out, _ = self.get_actions(state, status='train', exploration=False, actions_avail=actions_avail, target=False, last_hid=last_hids)
         if self.args.double_q:
             _, next_actions, _, _, _ = self.get_actions(next_state, status='train', exploration=False, actions_avail=actions_avail, target=False, last_hid=hids)
@@ -125,4 +125,4 @@ class MADDPG(Model):
         policy_loss = - advantages
         policy_loss = policy_loss.mean()
         value_loss = deltas.pow(2).mean()
-        return policy_loss, value_loss, None, action_out
+        return policy_loss, value_loss, None, None, action_out

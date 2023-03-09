@@ -26,6 +26,9 @@ class PGTrainer(object):
         self.policy_optimizer = optim.RMSprop( self.behaviour_net.policy_dicts.parameters(), lr=args.policy_lrate, alpha=0.99, eps=1e-5 )
         if hasattr(self.behaviour_net, 'correction_dicts'):
             self.correction_optimizer = optim.RMSprop( self.behaviour_net.correction_dicts.parameters(), lr=args.correction_lrate, alpha=0.99, eps=1e-5 )
+        if hasattr(self.behaviour_net, 'multiplier'):
+            params = [{'params': self.behaviour_net.multiplier, 'lr': args.lambda_lrate}]
+            self.lambda_optimizer = optim.RMSprop(params, alpha=0.99, eps=1e-5)
         self.value_optimizer = optim.RMSprop( self.behaviour_net.value_dicts.parameters(), lr=args.value_lrate, alpha=0.99, eps=1e-5 )
         if self.args.mixer:
             self.mixer_optimizer = optim.RMSprop( self.behaviour_net.mixer.parameters(), lr=args.mixer_lrate, alpha=0.99, eps=1e-5 )
@@ -35,8 +38,8 @@ class PGTrainer(object):
         self.entr = self.args.entr
 
     def get_loss(self, batch):
-        policy_loss, value_loss, correction_loss, logits = self.behaviour_net.get_loss(batch)
-        return policy_loss, value_loss, correction_loss, logits
+        policy_loss, value_loss, correction_loss, lambda_loss, logits = self.behaviour_net.get_loss(batch)
+        return policy_loss, value_loss, correction_loss, lambda_loss, logits
 
     def policy_compute_grad(self, stat, loss, retain_graph):
         if self.entr > 0:
@@ -81,12 +84,17 @@ class PGTrainer(object):
         batch = self.behaviour_net.Transition(*zip(*batch))
         self.mixer_transition_process(stat, batch)
 
+    def lambda_replay_process(self, stat):
+        batch = self.replay_buffer.get_batch(self.args.batch_size)
+        batch = self.behaviour_net.Transition(*zip(*batch))
+        self.lambda_transition_process(stat, batch)
+
     def policy_transition_process(self, stat, trans):
         if self.args.continuous:
-            policy_loss, _, _, logits = self.get_loss(trans)
+            policy_loss, _, _, _, logits = self.get_loss(trans)
             means, log_stds, *_  = logits
         else:
-            policy_loss, _, _, logits = self.get_loss(trans)
+            policy_loss, _, _, _, logits = self.get_loss(trans)
         self.policy_optimizer.zero_grad()
         if self.args.continuous:
             self.policy_compute_grad(stat, (policy_loss, means, log_stds), False)
@@ -100,10 +108,10 @@ class PGTrainer(object):
 
     def correction_transition_process(self, stat, trans):
         if self.args.continuous:
-            _, _, correction_loss, logits = self.get_loss(trans)
+            _, _, correction_loss, _, logits = self.get_loss(trans)
             means, log_stds, *_  = logits
         else:
-            _, _, correction_loss, logits = self.get_loss(trans)
+            _, _, correction_loss, _, logits = self.get_loss(trans)
         self.correction_optimizer.zero_grad()
         if self.args.continuous:
             self.correction_compute_grad(stat, (correction_loss, means, log_stds), False)
@@ -117,7 +125,7 @@ class PGTrainer(object):
         stat['mean_train_correction_loss'] = correction_loss.clone().mean().item()
 
     def value_transition_process(self, stat, trans):
-        _, value_loss, _, _ = self.get_loss(trans)
+        _, value_loss, _, _, _ = self.get_loss(trans)
         self.value_optimizer.zero_grad()
         self.value_compute_grad(value_loss, False)
         param = self.value_optimizer.param_groups[0]['params']
@@ -127,7 +135,7 @@ class PGTrainer(object):
         stat['mean_train_value_loss'] = value_loss.clone().mean().item()
 
     def mixer_transition_process(self, stat, trans):
-        _, value_loss, _, _ = self.get_loss(trans)
+        _, value_loss, _, _, _ = self.get_loss(trans)
         self.mixer_optimizer.zero_grad()
         self.value_compute_grad(value_loss, False)
         param = self.mixer_optimizer.param_groups[0]['params']
@@ -135,6 +143,14 @@ class PGTrainer(object):
         self.mixer_optimizer.step()
         stat['mean_train_mixer_grad_norm'] = mixer_grad_norms.item()
         stat['mean_train_mixer_loss'] = value_loss.clone().mean().item()
+
+    def lambda_transition_process(self, stat, trans):
+        _, _, _, lambda_loss, _ = self.get_loss(trans)
+        self.lambda_optimizer.zero_grad()
+        lambda_loss.backward()
+        self.lambda_optimizer.step()
+        self.behaviour_net.reset_multiplier()
+        stat['mean_train_lambda'] = self.behaviour_net.multiplier.detach().item()
 
     def run(self, stat, episode):
         self.behaviour_net.train_process(stat, self)
